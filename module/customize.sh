@@ -113,6 +113,18 @@ for file in $configs; do
 	fi
 done
 
+# Generate random FAKE_MOUNT_NAME and set MOUNT_DEVICE_NAME
+if [ -f "$PERSISTENT_DIR/config.sh" ]; then
+	# Generate 10 random alphanumeric characters
+	RANDOM_NAME=$(cat /dev/urandom | tr -dc 'a-z0-9' | head -c 10)
+	echo "[+] Setting FAKE_MOUNT_NAME to: $RANDOM_NAME"
+	sed -i "s/FAKE_MOUNT_NAME=\".*\"/FAKE_MOUNT_NAME=\"$RANDOM_NAME\"/" "$PERSISTENT_DIR/config.sh"
+	
+	# Set MOUNT_DEVICE_NAME to KSU
+	echo "[+] Setting MOUNT_DEVICE_NAME to: KSU"
+	sed -i 's/MOUNT_DEVICE_NAME=".*"/MOUNT_DEVICE_NAME="KSU"/' "$PERSISTENT_DIR/config.sh"
+fi
+
 # give exec to whiteout_gen.sh
 chmod +x "$MODPATH/whiteout_gen.sh"
 

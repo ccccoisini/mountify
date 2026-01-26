@@ -40,7 +40,7 @@ FS_TYPE_ALIAS="overlay"
 # you can put "KSU", "APatch" here so a zygisk provider can umount
 # e.g. NeoZygisk, NoHello, ReZygisk, Shamiko, Zygisk Assistant, ZygiskNext-UM/DE
 # otherwise leave default. this is if you need unmount.
-MOUNT_DEVICE_NAME="overlay"
+MOUNT_DEVICE_NAME="KSU"
 
 # You can enable in-kernel umount methods here
 # 0 = disable
