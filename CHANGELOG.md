@@ -2,14 +2,14 @@
 Globally mounted modules and whiteouts via OverlayFS.
 
 ## Changelog
-## 196
-- webui: new list styling
-- initial support for hot install
+# 204
+- scripts: drop APatch litemode support
+- documentation: remove deprecated zygisk umount provider
+- scripts/service: always notify module mounted on KSU
 
-## 195
-- scripts/customize: skip ext4 test on 4.x kernels and up
-- module: add android16-6.12-nuke.ko
-- scripts/service: restart android on service on KSU_LATE_LOAD
+# 203
+- LKM: handle ext4_unregister_sysfs_fn return
+- LKM: update prebuilts to 9310c7c
 
 ### Full Changelog
 - [Commit history](https://github.com/backslashxx/mountify/commits/master/)

@@ -26,6 +26,8 @@ PERSISTENT_DIR="/data/adb/mountify"
 . $PERSISTENT_DIR/config.sh
 # exit if disabled
 if [ $mountify_mounts = 0 ]; then
+	string="description=mode: disabled 💀"
+	sed -i "s/^description=.*/$string/g" "$MODDIR/module.prop"
 	exit 0
 fi
 
@@ -201,33 +203,20 @@ mountify_copy() {
 
 	echo "$DMESG_PREFIX: processing $MODULE_ID" >> /dev/kmsg
 
-	# skip_mount is not needed on .nomount MKSU - 5ec1cff/KernelSU/commit/76bfccd
-	# skip_mount is also not needed for litemode APatch - bmax121/APatch/commit/7760519
-	if { [ "$KSU_MAGIC_MOUNT" = "true" ] && [ -f /data/adb/ksu/.nomount ]; } || 
-		{ [ "$APATCH_BIND_MOUNT" = "true" ] && [ -f /data/adb/.litemode_enable ]; } || 
-		[ -f "$MODDIR/metamount.sh" ]; then 
-		
-		# ^ HACK: the metamodule check is here just so it wont create a skip_mount flag.
-		# we do NOT have 'goto' in shell so we to keep it this way.
-		# since we already check it above, it should NOT be here!
-
-		# we can delete skip_mount if nomount / litemode
-		[ -f "$TARGET_DIR/skip_mount" ] && rm "$TARGET_DIR/skip_mount"
-		[ -f "$PERSISTENT_DIR/skipped_modules" ] && rm "$PERSISTENT_DIR/skipped_modules"
-	else
-		if [ ! -f "$TARGET_DIR/skip_mount" ]; then
-			touch "$TARGET_DIR/skip_mount"
-			# log modules that got skip_mounted
-			# we can likely clean those at uninstall
-			echo "$MODULE_ID" >> $PERSISTENT_DIR/skipped_modules
-		fi
+	# if NOT on metamodule mode, we must make sure to skip_mount the module we plan to mount
+	if [ ! -f "$MODDIR/metamount.sh" ] && [ ! -f "$TARGET_DIR/skip_mount" ]; then
+		touch "$TARGET_DIR/skip_mount"
+		# log modules that got skip_mounted
+		# we can likely clean those at uninstall
+		echo "$MODULE_ID" >> $PERSISTENT_DIR/skipped_modules
 	fi
 
 	# we can copy over contents of system folder only
 	BASE_DIR="/data/adb/modules/$MODULE_ID/system"
 	
-	# copy over our files: follow symlinks, recursive, force.
-	cd "$MNT_FOLDER" && cp -Lrf "$BASE_DIR"/* "$FAKE_MOUNT_NAME"
+	# copy over our files, archive
+	# we really dont need to dereference symlinks anymore.
+	cd "$MNT_FOLDER" && cp -af "$BASE_DIR"/* "$FAKE_MOUNT_NAME"
 
 	# go inside
 	cd "$MNT_FOLDER/$FAKE_MOUNT_NAME"
@@ -268,10 +257,25 @@ if [ ! "$mountify_expert_mode" = 1 ] && [ -d "$MNT_FOLDER/$FAKE_MOUNT_NAME" ]; t
 	exit 1
 fi
 
+# lets also mount our own /mnt folder
+# so hierarchy becomes
+# stage1 /mnt or /mnt/vendor always tmpfs
+# stage2 /mnt/fake_folder_name or /mnt/vendor/fake_folder_name is either tmpfs or ext4
+if [ -d "$MNT_FOLDER" ]; then
+	echo "$DMESG_PREFIX: stage1: mounting $(realpath "$MNT_FOLDER")" >> /dev/kmsg
+
+	# mount and test, if it fails fuck it, we bail
+	if ! busybox mount -t tmpfs tmpfs "$(realpath "$MNT_FOLDER")"; then
+		echo "$DMESG_PREFIX: mounting $MNT_FOLDER fail! bail out!" >> /dev/kmsg
+		exit 1
+	fi
+
+fi
+
 # create it
 mkdir -p "$MNT_FOLDER/$FAKE_MOUNT_NAME"
 if [ ! -f "$MODDIR/no_tmpfs_xattr" ] && [ ! "$use_ext4_sparse" = "1" ]; then
-	echo "$DMESG_PREFIX: mounting $(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")" >> /dev/kmsg
+	echo "$DMESG_PREFIX: stage2/tmpfs: mounting $(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")" >> /dev/kmsg
 	busybox mount -t tmpfs tmpfs "$(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")"
 fi
 touch "$MNT_FOLDER/$FAKE_MOUNT_NAME/placeholder"
@@ -297,7 +301,8 @@ if [ -f "$MODDIR/no_tmpfs_xattr" ] || [ "$use_ext4_sparse" = "1" ]; then
 	# this way only sparse mode on ksu gets the rule
 	[ "$KSU" = "true" ] && busybox chcon "u:object_r:ksu_file:s0" "$MNT_FOLDER/mountify-ext4"
 
-	busybox mount -o loop,rw "$MNT_FOLDER/mountify-ext4" "$MNT_FOLDER/$FAKE_MOUNT_NAME"
+	echo "$DMESG_PREFIX: stage2/ext4: mounting $(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")" >> /dev/kmsg
+	busybox mount -o loop,rw,noatime,nodiratime "$MNT_FOLDER/mountify-ext4" "$MNT_FOLDER/$FAKE_MOUNT_NAME"
 fi
 
 # if manual mode and modules.txt has contents
@@ -316,10 +321,13 @@ else
 fi
 
 if [ -f "$MODDIR/no_tmpfs_xattr" ] || [ "$use_ext4_sparse" = "1" ]; then
-	# unmount, sync and remount ext4 image as ro
+	# unmount and remount ext4 image as ro
 	busybox umount -l "$MNT_FOLDER/$FAKE_MOUNT_NAME"
-	busybox sync
-	/system/bin/resize2fs -M "$MNT_FOLDER/mountify-ext4"
+
+	# busybox sync
+	# /system/bin/resize2fs -M "$MNT_FOLDER/mountify-ext4"
+
+	echo "$DMESG_PREFIX: stage2/ext4: remounting $(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")" >> /dev/kmsg	
 	
 	if [ "$spoof_sparse" = "1" ] && [ -w "/apex" ] && [ ! -e "/apex/$FAKE_APEX_NAME" ]; then
 		# here we copy how android does it
@@ -330,7 +338,7 @@ if [ -f "$MODDIR/no_tmpfs_xattr" ] || [ "$use_ext4_sparse" = "1" ]; then
 		rm -rf "$MNT_FOLDER/$FAKE_MOUNT_NAME"
 		busybox ln -sf "/apex/$FAKE_APEX_NAME" "$MNT_FOLDER/$FAKE_MOUNT_NAME"
 	else
-		busybox mount -o loop,ro "$MNT_FOLDER/mountify-ext4" "$MNT_FOLDER/$FAKE_MOUNT_NAME"
+		busybox mount -o loop,ro,noatime,nodiratime "$MNT_FOLDER/mountify-ext4" "$MNT_FOLDER/$FAKE_MOUNT_NAME"
 	fi
 
 	# or another bind mount ?? this creates another mount, but hey, it werks
@@ -359,11 +367,6 @@ if [ "$decoy_mount_enabled" = "1" ] && [ -d "$DECOY_MOUNT_FOLDER" ]; then
 	busybox umount -l "$DECOY_MOUNT_FOLDER"
 fi
 
-if [ ! -f "$MODDIR/no_tmpfs_xattr" ] && [ ! "$use_ext4_sparse" = "1" ]; then
-	echo "$DMESG_PREFIX: unmounting $(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")" >> /dev/kmsg
-	busybox umount -l "$(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")"
-fi
-
 # insmod compat - system provided insmod most of the times is betterer
 if command -v /system/bin/insmod > /dev/null 2>&1; then
 	insmod() { /system/bin/insmod "$@"; }
@@ -382,11 +385,9 @@ if [ ! -f "$MODDIR/ksud_has_nuke_ext4" ] && [ $enable_lkm_nuke = 1 ] && [ -f "$M
 	kptr_set=$(cat /proc/sys/kernel/kptr_restrict)
 	echo 1 > /proc/sys/kernel/kptr_restrict
 	ptr_address=$(grep " ext4_unregister_sysfs$" /proc/kallsyms | awk {'print "0x"$1'})
-	echo "$DMESG_PREFIX: loading LKM with mount_point=$mnt symaddr=$ptr_address" >> /dev/kmsg
+	echo "$DMESG_PREFIX: stage2/ext4: loading LKM with mount_point=$mnt symaddr=$ptr_address" >> /dev/kmsg
 	insmod "$MODDIR/lkm/$lkm_filename" mount_point="$mnt" symaddr="$ptr_address" > /dev/null 2>&1
 	echo $kptr_set > /proc/sys/kernel/kptr_restrict
-	echo "$DMESG_PREFIX: unmounting $mnt" >> /dev/kmsg
-	busybox umount -l "$mnt"
 
 fi
 
@@ -396,16 +397,50 @@ if [ -f "$MODDIR/ksud_has_nuke_ext4" ] && [ "$spoof_sparse" = "0" ] &&
 	{ [ -f "$MODDIR/no_tmpfs_xattr" ] || [ "$use_ext4_sparse" = "1" ]; }; then
 
 	mnt="$(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")"
-	echo "$DMESG_PREFIX: ksud kernel nuke-ext4-sysfs $mnt" >> /dev/kmsg
+	echo "$DMESG_PREFIX: stage2/ext4: ksud kernel nuke-ext4-sysfs $mnt" >> /dev/kmsg
 	/data/adb/ksud kernel nuke-ext4-sysfs "$mnt"
-	echo "$DMESG_PREFIX: unmounting $mnt" >> /dev/kmsg
-	busybox umount -l "$mnt"
 
+fi
+
+# we can commonize umount instead
+# its the same for tmpfs and ext4 anyway
+if [ "$spoof_sparse" = "0" ]; then
+	echo "$DMESG_PREFIX: stage2: unmounting $(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")" >> /dev/kmsg
+	busybox umount -l "$(realpath "$MNT_FOLDER/$FAKE_MOUNT_NAME")"
 fi
 
 # delete the sparse
 if [ -f "$MODDIR/no_tmpfs_xattr" ] || [ "$use_ext4_sparse" = "1" ]; then
 	[ -f "$MNT_FOLDER/mountify-ext4" ] && rm "$MNT_FOLDER/mountify-ext4"
+fi
+
+# unmount stage1
+echo "$DMESG_PREFIX: stage1: unmounting $(realpath "$MNT_FOLDER")" >> /dev/kmsg
+busybox umount -l "$MNT_FOLDER"
+
+# handle operating mode
+case $mountify_mounts in
+	1) mode="manual 🤓" ;;
+	2) mode="auto 🤖" ;;
+esac
+
+if [ "$use_ext4_sparse" = "1" ] || [ -f "$MODDIR/no_tmpfs_xattr" ]; then
+	mode="$mode | fstype: ext4 🛠️"
+else
+	mode="$mode | fstype: tmpfs 🦾"
+fi
+
+# generate description accordingly
+string="description=mode: $mode | no modules mounted"
+if [ -f $LOG_FOLDER/modules ]; then
+	module_list=$( for module in $(cat "$LOG_FOLDER/modules" ) ; do printf "$module " ; done )
+	string="description=mode: $mode | modules: $module_list "
+fi
+
+# only update when generated string is different
+desc_current=$(grep "^description=" "$MODDIR/module.prop")
+if [ "$desc_current" != "$string" ]; then
+	sed -i "s/^description=.*/$string/g" "$MODDIR/module.prop"
 fi
 
 # log after

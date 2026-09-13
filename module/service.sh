@@ -43,8 +43,6 @@ done
 do_ksud_umount() {
 for mount in $(cat "$LOG_FOLDER/mountify_mount_list"); do
 	/data/adb/ksud kernel umount add "$mount" --flags 2 > /dev/null 2>&1
-	# now inform ksud so that the kernel unlocks the feature
-	/data/adb/ksud kernel notify-module-mounted >/dev/null 2>&1
 done
 }
 
@@ -56,61 +54,19 @@ if [ "$mountify_custom_umount" = 2 ]; then
 	do_ksud_umount
 fi
 
+if [ "$KSU" = true ]; then
+	/data/adb/ksud kernel notify-module-mounted >/dev/null 2>&1
+fi
+
 # cleanup
 # prep logs for status
 busybox diff "$LOG_FOLDER/before" "$LOG_FOLDER/after" | grep " $FS_TYPE_ALIAS " > "$MODDIR/mount_diff"
 
-# handle operating mode
-case $mountify_mounts in
-	1) mode="manual 🤓" ;;
-	2) mode="auto 🤖" ;;
-	*) mode="disabled 💀" ;; # ??
-esac
-
-if [ -f "$LOG_FOLDER/mountify_symlink" ]; then
-	mode="$mode | ???: symlink 🔗"
-elif [ "$use_ext4_sparse" = "1" ] || [ -f "$MODDIR/no_tmpfs_xattr" ]; then
-	mode="$mode | fstype: ext4 🛠️"
-else
-	mode="$mode | fstype: tmpfs 🦾"
-fi
-
-# display if on nomount/litemode
-if [ "$KSU_MAGIC_MOUNT" = "true" ] && [ -f /data/adb/ksu/.nomount ]; then
-	mode="$mode | nomount: ✅"
-fi
-if [ "$APATCH_BIND_MOUNT" = "true" ] && [ -f /data/adb/.litemode_enable ]; then 
-	mode="$mode | litemode: ✅"
-fi
-
-# update description accrdingly
-string="description=mode: $mode | no modules mounted"
-if [ -f $LOG_FOLDER/modules ]; then
-	module_list=$( for module in $(cat "$LOG_FOLDER/modules" ) ; do printf "$module " ; done )
-	string="description=mode: $mode | modules: $module_list "
-fi
-sed -i "s/^description=.*/$string/g" $MODDIR/module.prop
-
-# wait for boot-complete
-until [ "$(getprop sys.boot_completed)" = "1" ]; do
-	sleep 1
-done
-
-# reset bootcount (anti-bootloop routine)
-echo "BOOTCOUNT=0" > "$MODDIR/count.sh"
-
 if [ ! "$APATCH" = true ] && [ ! "$KSU" = true ]; then
+	until [ "$(getprop sys.boot_completed)" = "1" ]; do
+		sleep 1
+	done
 	sh "$MODDIR/boot-completed.sh" &
 fi
-
-# remove mountify single instance lock
-MOUNTIFY_LOCK="/dev/mountify_single_instance"
-if [ -f "$MOUNTIFY_LOCK" ]; then
-	echo "mountify/service: lifting single instance lock" >> /dev/kmsg
-	rm "$MOUNTIFY_LOCK"
-fi
-
-# clean log folder
-[ -d "$LOG_FOLDER" ] && rm -rf "$LOG_FOLDER"
 
 # EOF

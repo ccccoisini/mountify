@@ -25,7 +25,7 @@
 3. copies contents of `/data/adb/modules/module_id` to `/mnt/vendor/fake_folder_name`
 4. mirrors SELinux context of every file from `/data/adb/modules/module_id` to `/mnt/vendor/fake_folder_name`
 5. loops 3 and 4 for all modules
-6. unmounts, resizes and remounts sparse image to `/mnt/vendor/fake_folder_name`
+6. unmounts and remounts sparse image to `/mnt/vendor/fake_folder_name`
 7. overlays `/mnt/vendor/fake_folder_name/system/bin` to `/system/bin` and other folders
 
 ## Why?
@@ -72,8 +72,8 @@ mountify_whiteouts
 - `lkm_filename="nuke.ko"` to define LKM's filename
 
 ### Need Unmount?
-- use either NeoZygisk, NoHello, ReZygisk, Zygisk Assistant
-- if you use Zygisk Next, then set Denylist Policy to "Enforced" or "Unmount Only"
+- use either NeoZygisk, ReZygisk, Zygisk Assistant, Zygisk Next
+- on Zygisk Next, set Denylist Policy to "Enforced" or "Unmount Only"
 - then edit config.sh
    - `MOUNT_DEVICE_NAME="APatch"` if you're on APatch
    - `MOUNT_DEVICE_NAME="KSU"` if you're on KernelSU forks
@@ -82,9 +82,9 @@ mountify_whiteouts
    - NOTE: zygisk provider umount is still better, this is here as a second choice.
 
 #### I need mountify to skip mounting my module!
-- this is easy, add `skip_mountify` to your module's folder.
-- mountify checks this on /data/adb/modules/module_name
-- `[ -f /data/adb/modules/module_name/skip_mountify ]`
+- `skip_mount` is respected on metamodule mode (KSU / APatch)
+- however on Magisk make sure to use `skip_mountify` instead
+- mountify checks these on /data/adb/modules/module_name
 
 ### Advanced / Debugging
 - remove `metamodule=true` from module.prop before installing to force non-metamodule mode
